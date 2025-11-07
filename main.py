@@ -50,36 +50,44 @@ def read_charged_words_from_zip(zip_filepath='charged_dict.zip', encoding='utf-8
     return words
 
 
-async def proccess_articles(session, morph, charged_words, url):
+def print_result(url, score, words_count):
+    print('URL:', url)
+    print('Рейтинг:', score)
+    print('Слов в статье:', words_count)
+
+
+async def proccess_articles(session, morph, charged_words, url, results_list):
     html = await fetch(session, url)
     text = sanitize(html, plaintext=True)
     words = split_by_words(morph, text)
     words_count = len(words)
     score = calculate_jaundice_rate(words, charged_words)
-    print('URL:', url)
-    print('Рейтинг:', score)
-    print('Слов в статье:', words_count)
+    results_list.append((url, score, words_count))
 
 
 async def main():
     morph = pymorphy2.MorphAnalyzer()
     charged_words = read_charged_words_from_zip()
 
+    results = []
+
     async with aiohttp.ClientSession() as session:
 
         start_time = time.perf_counter()
         async with create_task_group() as tg:
             for url in TEST_ARTICLES:
-
                 tg.start_soon(proccess_articles,
                               session,
                               morph,
                               charged_words,
-                              url
+                              url,
+                              results
                               )
-        end_time = time.perf_counter()
-        print('Время выполнения:', end_time - start_time)
-                
+    for result in results:
+        print_result(*result)
+    end_time = time.perf_counter()
+    print('Время выполнения:', end_time - start_time)
+
 
 if __name__ == '__main__':
     asyncio.run(main())
