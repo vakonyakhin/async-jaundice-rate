@@ -2,25 +2,37 @@ import aiohttp
 import asyncio
 from functools import lru_cache
 import time
+from enum import Enum
 
 import pymorphy2
 import zipfile
 from anyio import create_task_group
+from adapters.exceptions import ArticleNotFound
+from async_timeout import timeout
 
 
 from adapters.inosmi_ru import sanitize
 from text_tools import split_by_words, calculate_jaundice_rate
 
+
 TEST_ARTICLES = ['https://inosmi.ru/20251106/grem-275508043.html',
-                 'https://inosmi.ru/20251107/norvegiya-275513596.html',
+                 'https://inosmi.ru/20251107/norvegiya-275513596.html,',
                  'https://inosmi.ru/20251107/mindich-275512408.html',
                  'https://inosmi.ru/20251107/borba-275515286.html',
                  'https://inosmi.ru/20251107/konflikt-275516176.html',
                  'https://inosmi.ru/20251107/kurily-275519675.html',
                  'https://inosmi.ru/20251107/evropa_kitay-275523452.html',
                  'https://inosmi.ru/20251107/germaniya-275518854.html',
-                 'https://inosmi.ru/20251107/germaniya-275520710.html'
+                 'https://inosmi.ru/20251107/germaniya-275520710.html',
+                 'https://lenta.ru/brief/2021/08/26/afg_terror/'
                  ]
+
+
+class ProcessingStatus(Enum):
+    OK = 'OK'
+    FETCH_ERROR = 'FETCH_ERROR'
+    PARSING_ERROR = 'PARSING_ERROR'
+    TIMEOUT = 'TIMEOUT'
 
 
 async def fetch(session, url):
@@ -50,19 +62,38 @@ def read_charged_words_from_zip(zip_filepath='charged_dict.zip', encoding='utf-8
     return words
 
 
-def print_result(url, score, words_count):
-    print('URL:', url)
-    print('Рейтинг:', score)
-    print('Слов в статье:', words_count)
+def print_result(url, score, words_count, status):
+    print(f'URL: {url}')
+    print(f'Статус: {status}')
+    print(f'Рейтинг: {score}')
+    print(f'Слов в статье: {words_count}\n')
 
 
 async def proccess_articles(session, morph, charged_words, url, results_list):
-    html = await fetch(session, url)
-    text = sanitize(html, plaintext=True)
-    words = split_by_words(morph, text)
-    words_count = len(words)
-    score = calculate_jaundice_rate(words, charged_words)
-    results_list.append((url, score, words_count))
+    try:
+        async with timeout(3):
+        
+            html = await fetch(session, url)
+            text = sanitize(html, plaintext=True)
+            words = split_by_words(morph, text)
+            words_count = len(words)
+            score = calculate_jaundice_rate(words, charged_words)
+            status = ProcessingStatus.OK.value
+    except aiohttp.ClientResponseError:
+            url = 'https://inosmi.ru/not/exist.html'
+            status = ProcessingStatus.FETCH_ERROR.value
+            score = None
+            words_count = None
+    except ArticleNotFound:
+            status = ProcessingStatus.PARSING_ERROR.value
+            score = None
+            words_count = None
+    except asyncio.exceptions.TimeoutError:
+            status = ProcessingStatus.TIMEOUT.value
+            score = None
+            words_count = None
+
+    results_list.append((url, score, words_count, status))
 
 
 async def main():
@@ -70,19 +101,20 @@ async def main():
     charged_words = read_charged_words_from_zip()
 
     results = []
-
     async with aiohttp.ClientSession() as session:
 
         start_time = time.perf_counter()
         async with create_task_group() as tg:
             for url in TEST_ARTICLES:
-                tg.start_soon(proccess_articles,
-                              session,
-                              morph,
-                              charged_words,
-                              url,
-                              results
-                              )
+                tg.start_soon(
+                    proccess_articles,
+                    session,
+                    morph,
+                    charged_words,
+                    url,
+                    results
+                    )
+
     for result in results:
         print_result(*result)
     end_time = time.perf_counter()
