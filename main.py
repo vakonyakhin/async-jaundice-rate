@@ -3,6 +3,7 @@ import asyncio
 from functools import lru_cache
 import time
 from enum import Enum
+from functools import lru_cache, wraps
 
 import pymorphy2
 import zipfile
@@ -13,6 +14,8 @@ from async_timeout import timeout
 
 from adapters.inosmi_ru import sanitize
 from text_tools import split_by_words, calculate_jaundice_rate
+
+
 
 
 TEST_ARTICLES = ['https://inosmi.ru/20251106/grem-275508043.html',
@@ -33,6 +36,17 @@ class ProcessingStatus(Enum):
     FETCH_ERROR = 'FETCH_ERROR'
     PARSING_ERROR = 'PARSING_ERROR'
     TIMEOUT = 'TIMEOUT'
+
+
+def timer(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = await func(*args, **kwargs)
+        end_time = time.perf_counter()
+        print(f'Анализ закончен за {end_time - start_time: .2f} секунд\n')
+        return result
+    return wrapper
 
 
 async def fetch(session, url):
@@ -66,13 +80,14 @@ def print_result(url, score, words_count, status):
     print(f'URL: {url}')
     print(f'Статус: {status}')
     print(f'Рейтинг: {score}')
-    print(f'Слов в статье: {words_count}\n')
+    print(f'Слов в статье: {words_count}')
 
 
+@timer
 async def proccess_articles(session, morph, charged_words, url, results_list):
     try:
         async with timeout(3):
-        
+
             html = await fetch(session, url)
             text = sanitize(html, plaintext=True)
             words = split_by_words(morph, text)
@@ -99,11 +114,9 @@ async def proccess_articles(session, morph, charged_words, url, results_list):
 async def main():
     morph = pymorphy2.MorphAnalyzer()
     charged_words = read_charged_words_from_zip()
-
     results = []
-    async with aiohttp.ClientSession() as session:
 
-        start_time = time.perf_counter()
+    async with aiohttp.ClientSession() as session:
         async with create_task_group() as tg:
             for url in TEST_ARTICLES:
                 tg.start_soon(
@@ -117,8 +130,6 @@ async def main():
 
     for result in results:
         print_result(*result)
-    end_time = time.perf_counter()
-    print('Время выполнения:', end_time - start_time)
 
 
 if __name__ == '__main__':
