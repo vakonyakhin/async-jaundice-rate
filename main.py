@@ -4,6 +4,7 @@ from functools import lru_cache
 import time
 from enum import Enum
 from functools import lru_cache, wraps
+import contextlib
 
 import pymorphy2
 import zipfile
@@ -38,15 +39,18 @@ class ProcessingStatus(Enum):
     TIMEOUT = 'TIMEOUT'
 
 
-def timer(func):
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        start_time = time.perf_counter()
-        result = await func(*args, **kwargs)
-        end_time = time.perf_counter()
-        print(f'Анализ закончен за {end_time - start_time: .2f} секунд\n')
-        return result
-    return wrapper
+# def timer(func):
+#     @wraps(func)
+#     async def wrapper(*args, **kwargs):
+#         start_time = time.perf_counter()
+#         result = await func(*args, **kwargs)
+#         end_time = time.perf_counter()
+#         timer = round(end_time - start_time, 2)
+#         # for result in results:
+#         #     print_result(*result)
+#         print(f'Анализ закончен за {timer} секунд\n')
+#         return result
+#     return wrapper
 
 
 async def fetch(session, url):
@@ -76,42 +80,56 @@ def read_charged_words_from_zip(zip_filepath='charged_dict.zip', encoding='utf-8
     return words
 
 
-def print_result(url, score, words_count, status):
+@contextlib.asynccontextmanager
+async def timer():
+    container = {
+        'elapsed_time' : 0.00
+    }
+    old_time = time.monotonic()
+    try:
+        yield container
+    finally:
+        new_time = time.monotonic()
+        container['elapsed_time'] = new_time - old_time
+
+
+def print_result(url, score, words_count, status, load_time):
     print(f'URL: {url}')
     print(f'Статус: {status}')
     print(f'Рейтинг: {score}')
     print(f'Слов в статье: {words_count}')
+    print(f'Анализ закончен за {load_time:.2f} секунд\n')
 
 
-@timer
 async def proccess_articles(session, morph, charged_words, url, results_list):
+    score = None
+    words_count = None
+    elapsed_time = 0.00 
     try:
-        async with timeout(3):
-
-            html = await fetch(session, url)
-            text = sanitize(html, plaintext=True)
-            words = split_by_words(morph, text)
-            words_count = len(words)
-            score = calculate_jaundice_rate(words, charged_words)
-            status = ProcessingStatus.OK.value
+        async with timeout(3000):
+            async with timer() as container:
+                html = await fetch(session, url)
+                text = sanitize(html, plaintext=True)
+                words = split_by_words(morph, text)
+                words_count = len(words)
+                score = calculate_jaundice_rate(words, charged_words)
+                status = ProcessingStatus.OK.value
+            elapsed_time = container['elapsed_time'] 
     except aiohttp.ClientResponseError:
             url = 'https://inosmi.ru/not/exist.html'
             status = ProcessingStatus.FETCH_ERROR.value
-            score = None
-            words_count = None
+
     except ArticleNotFound:
             status = ProcessingStatus.PARSING_ERROR.value
-            score = None
-            words_count = None
+
     except asyncio.exceptions.TimeoutError:
             status = ProcessingStatus.TIMEOUT.value
-            score = None
-            words_count = None
 
-    results_list.append((url, score, words_count, status))
+    results_list.append((url, score, words_count, status, elapsed_time))
 
 
 async def main():
+
     morph = pymorphy2.MorphAnalyzer()
     charged_words = read_charged_words_from_zip()
     results = []
