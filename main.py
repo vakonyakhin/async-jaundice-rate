@@ -39,18 +39,18 @@ class ProcessingStatus(Enum):
     TIMEOUT = 'TIMEOUT'
 
 
-def timer(func):
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        start_time = time.perf_counter()
-        result = await func(*args, **kwargs)
-        end_time = time.perf_counter()
-        timer = round(end_time - start_time, 2)
-        # for result in results:
-        #     print_result(*result)
-        print(f'Анализ закончен за {timer} секунд\n')
-        return result
-    return wrapper
+# def timer(func):
+#     @wraps(func)
+#     async def wrapper(*args, **kwargs):
+#         start_time = time.perf_counter()
+#         result = await func(*args, **kwargs)
+#         end_time = time.perf_counter()
+#         timer = round(end_time - start_time, 2)
+#         # for result in results:
+#         #     print_result(*result)
+#         print(f'Анализ закончен за {timer} секунд\n')
+#         return result
+#     return wrapper
 
 
 async def fetch(session, url):
@@ -91,6 +91,9 @@ async def timer():
     finally:
         new_time = time.monotonic()
         container['elapsed_time'] = new_time - old_time
+        print(f"Time taken: {container['elapsed_time']} seconds")
+
+
 
 
 def print_result(url, score, words_count, status, load_time):
@@ -106,15 +109,17 @@ async def proccess_articles(session, morph, charged_words, url):
     words_count = None
     elapsed_time = 0.00 
     try:
-        async with timeout(3):
-            async with timer() as container:
+        
+        async with timer() as container:
+            async with timeout(3000):
                 html = await fetch(session, url)
-                text = sanitize(html, plaintext=True)
-                words = split_by_words(morph, text)
+            text = sanitize(html, plaintext=True)
+            words = await split_by_words(morph, text)
+            if len(words) != 0:
                 words_count = len(words)
-                score = calculate_jaundice_rate(words, charged_words)
-                status = ProcessingStatus.OK.value
-            elapsed_time = container['elapsed_time'] 
+            score = calculate_jaundice_rate(words, charged_words)
+            status = ProcessingStatus.OK.value
+        elapsed_time = container['elapsed_time'] 
     except aiohttp.ClientResponseError:
             status = ProcessingStatus.FETCH_ERROR.value
 
